@@ -1,0 +1,10 @@
+version: '3.8'
+
+services:
+  c4-generator:
+    build: .
+    volumes:
+      - ./input:/workspace/input
+      - ./output:/workspace/output
+    working_dir: /workspace
+    command: python /workspace/scripts/analyze_spring.py
