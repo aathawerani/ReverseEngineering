@@ -2,9 +2,12 @@
   "VaulPay": {
     "path": "/workspace",
     "endpoints": [],
+    "controllers": [],
     "feign_clients": [],
+    "http_clients": [],
     "rest_calls": [],
     "database": {},
-    "port": "unknown"
+    "port": "unknown",
+    "properties": {}
   }
 }
