@@ -1,5 +1,9 @@
 workspace {
     model {
+        user = person "User" {
+            description "System User"
+        }
+
         VaulPay = softwareSystem "VaulPay" {
             description "Spring Boot Microservice"
             tags "Microservice"
@@ -7,7 +11,12 @@ workspace {
     }
 
     views {
-        systemContext {
+        systemLandscape "SystemLandscape" {
+            include *
+            autolayout lr
+        }
+
+        systemContext VaulPay "SystemContext_VaulPay" {
             include *
             autolayout lr
         }
