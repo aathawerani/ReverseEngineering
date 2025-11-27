@@ -1,0 +1,10 @@
+{
+  "VaulPay": {
+    "path": "/workspace",
+    "endpoints": [],
+    "feign_clients": [],
+    "rest_calls": [],
+    "database": {},
+    "port": "unknown"
+  }
+}
