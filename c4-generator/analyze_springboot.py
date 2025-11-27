@@ -74,33 +74,57 @@ class SpringBootAnalyzer:
         return props
     
     def extract_rest_endpoints(self, service_path):
-        """Extract REST endpoints from controller files"""
+        """Extract REST endpoints from all Java files with REST annotations"""
         endpoints = []
-        java_files = service_path.rglob('*Controller.java')
+        controllers = []
+        java_files = list(service_path.rglob('*.java'))
         
         for java_file in java_files:
             try:
                 with open(java_file, 'r', encoding='utf-8') as f:
                     content = f.read()
                     
-                    # Find class-level RequestMapping
-                    class_mapping = re.search(r'@RequestMapping\(["\']([^"\']+)["\']', content)
-                    base_path = class_mapping.group(1) if class_mapping else ""
-                    
-                    # Find method mappings
-                    methods = re.findall(r'@(?:Get|Post|Put|Delete|Patch)Mapping\(["\']([^"\']+)["\']', content)
-                    for method in methods:
-                        full_path = base_path + method
-                        endpoints.append(full_path)
+                    # Check if file has REST annotations
+                    if any(anno in content for anno in ['@RestController', '@Controller', '@RequestMapping', 
+                                                         '@GetMapping', '@PostMapping', '@PutMapping', 
+                                                         '@DeleteMapping', '@PatchMapping']):
+                        controllers.append(java_file.name)
                         
-            except:
+                        # Find class-level RequestMapping
+                        class_mapping = re.search(r'@RequestMapping\(["\']([^"\']+)["\']', content)
+                        base_path = class_mapping.group(1) if class_mapping else ""
+                        
+                        # Also check for value parameter
+                        if not base_path:
+                            class_mapping = re.search(r'@RequestMapping\([^)]*value\s*=\s*["\']([^"\']+)["\']', content)
+                            base_path = class_mapping.group(1) if class_mapping else ""
+                        
+                        # Find method mappings with various formats
+                        method_patterns = [
+                            r'@(?:Get|Post|Put|Delete|Patch)Mapping\(["\']([^"\']+)["\']',
+                            r'@(?:Get|Post|Put|Delete|Patch)Mapping\([^)]*value\s*=\s*["\']([^"\']+)["\']',
+                            r'@RequestMapping\([^)]*value\s*=\s*["\']([^"\']+)["\'][^)]*method\s*=\s*RequestMethod\.(\w+)'
+                        ]
+                        
+                        for pattern in method_patterns:
+                            methods = re.findall(pattern, content)
+                            for method in methods:
+                                if isinstance(method, tuple):
+                                    path = method[0]
+                                else:
+                                    path = method
+                                full_path = base_path + path
+                                endpoints.append(full_path)
+                        
+            except Exception as e:
                 pass
         
-        return endpoints
+        return endpoints, controllers
     
     def extract_feign_clients(self, service_path):
-        """Extract Feign client dependencies"""
+        """Extract Feign client dependencies and other HTTP clients"""
         feign_clients = []
+        http_clients = []
         java_files = service_path.rglob('*.java')
         
         for java_file in java_files:
@@ -112,10 +136,18 @@ class SpringBootAnalyzer:
                     clients = re.findall(r'@FeignClient\([^)]*name\s*=\s*["\']([^"\']+)["\']', content)
                     feign_clients.extend(clients)
                     
+                    # Also check for value parameter
+                    clients = re.findall(r'@FeignClient\(["\']([^"\']+)["\']', content)
+                    feign_clients.extend(clients)
+                    
+                    # Look for WebClient or RestTemplate usage with service names
+                    if 'WebClient' in content or 'RestTemplate' in content:
+                        http_clients.append(java_file.name)
+                    
             except:
                 pass
         
-        return list(set(feign_clients))
+        return list(set(feign_clients)), http_clients
     
     def extract_rest_template_calls(self, service_path):
         """Extract RestTemplate calls to other services"""
@@ -140,18 +172,36 @@ class SpringBootAnalyzer:
         """Extract database information from properties"""
         db_info = {}
         
-        if 'spring.datasource.url' in props:
-            db_url = props['spring.datasource.url']
-            if 'postgresql' in db_url.lower():
-                db_info['type'] = 'PostgreSQL'
-            elif 'mysql' in db_url.lower():
-                db_info['type'] = 'MySQL'
-            elif 'h2' in db_url.lower():
-                db_info['type'] = 'H2'
-            elif 'mongodb' in db_url.lower():
-                db_info['type'] = 'MongoDB'
-            else:
-                db_info['type'] = 'Database'
+        # Check various datasource property formats
+        ds_url_keys = ['spring.datasource.url', 'spring.r2dbc.url', 'datasource.url']
+        for key in ds_url_keys:
+            if key in props:
+                db_url = props[key]
+                if 'postgresql' in db_url.lower():
+                    db_info['type'] = 'PostgreSQL'
+                elif 'mysql' in db_url.lower():
+                    db_info['type'] = 'MySQL'
+                elif 'oracle' in db_url.lower():
+                    db_info['type'] = 'Oracle'
+                elif 'sqlserver' in db_url.lower():
+                    db_info['type'] = 'SQL Server'
+                elif 'h2' in db_url.lower():
+                    db_info['type'] = 'H2'
+                elif 'mongodb' in db_url.lower():
+                    db_info['type'] = 'MongoDB'
+                else:
+                    db_info['type'] = 'Database'
+                db_info['url'] = db_url
+                break
+        
+        # Check for JPA/Hibernate
+        if 'spring.jpa.database-platform' in props or 'spring.jpa.hibernate.ddl-auto' in props:
+            if not db_info:
+                db_info['type'] = 'JPA Database'
+        
+        # Check for MongoDB
+        if 'spring.data.mongodb.uri' in props or 'spring.data.mongodb.host' in props:
+            db_info['type'] = 'MongoDB'
         
         return db_info
     
@@ -163,13 +213,19 @@ class SpringBootAnalyzer:
             service_name = self.extract_service_name(service_path)
             props = self.find_application_properties(service_path)
             
+            endpoints, controllers = self.extract_rest_endpoints(service_path)
+            feign_clients, http_clients = self.extract_feign_clients(service_path)
+            
             self.services[service_name] = {
                 'path': str(service_path),
-                'endpoints': self.extract_rest_endpoints(service_path),
-                'feign_clients': self.extract_feign_clients(service_path),
+                'endpoints': endpoints,
+                'controllers': controllers,
+                'feign_clients': feign_clients,
+                'http_clients': http_clients,
                 'rest_calls': self.extract_rest_template_calls(service_path),
                 'database': self.extract_database_info(props),
-                'port': props.get('server.port', props.get('server', {}).get('port', 'unknown'))
+                'port': props.get('server.port', props.get('server', {}).get('port', 'unknown')),
+                'properties': props
             }
             
             # Create relationships
@@ -264,17 +320,34 @@ class SpringBootAnalyzer:
         
         for service_name, service_data in self.services.items():
             report.append(f"\n## {service_name}")
-            report.append(f"- Port: {service_data['port']}")
-            report.append(f"- Endpoints: {len(service_data['endpoints'])}")
+            report.append(f"- **Path**: {service_data['path']}")
+            report.append(f"- **Port**: {service_data['port']}")
+            report.append(f"- **Controllers Found**: {len(service_data.get('controllers', []))}")
             
+            if service_data.get('controllers'):
+                report.append(f"  - {', '.join(service_data['controllers'][:10])}")
+            
+            report.append(f"- **Endpoints Found**: {len(service_data['endpoints'])}")
             if service_data['endpoints']:
-                report.append("  - " + "\n  - ".join(service_data['endpoints'][:5]))
+                for endpoint in service_data['endpoints'][:10]:
+                    report.append(f"  - {endpoint}")
+                if len(service_data['endpoints']) > 10:
+                    report.append(f"  - ... and {len(service_data['endpoints']) - 10} more")
             
-            if service_data['feign_clients']:
-                report.append(f"- Feign Clients: {', '.join(service_data['feign_clients'])}")
+            if service_data.get('feign_clients'):
+                report.append(f"- **Feign Clients**: {', '.join(service_data['feign_clients'])}")
+            
+            if service_data.get('http_clients'):
+                report.append(f"- **HTTP Client Files**: {len(service_data['http_clients'])} files")
             
             if service_data['database']:
-                report.append(f"- Database: {service_data['database'].get('type', 'Unknown')}")
+                report.append(f"- **Database**: {service_data['database'].get('type', 'Unknown')}")
+                if 'url' in service_data['database']:
+                    report.append(f"  - URL: {service_data['database']['url']}")
+            
+            # Show some properties if found
+            if service_data.get('properties'):
+                report.append(f"- **Configuration Properties**: {len(service_data['properties'])} found")
         
         with open(output_file, 'w') as f:
             f.write('\n'.join(report))
