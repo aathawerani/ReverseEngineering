@@ -1,15 +1,15 @@
-FROM eclipse-temurin:17-jre
+FROM eclipse-temurin:17-jdk
 
-# Install git & unzip (needed for script)
-RUN apt-get update && apt-get install -y git unzip && rm -rf /var/lib/apt/lists/*
+# Install git
+RUN apt-get update && apt-get install -y git maven && rm -rf /var/lib/apt/lists/*
 
-# Download the static extractor (no compile required)
-RUN git clone https://github.com/avasseur-cbo/structurizr-source-code-parser.git /tool
+# Clone the official structurizr java repo
+RUN git clone https://github.com/structurizr/java.git /tool
 
 WORKDIR /tool
 
-# Build a runnable fat-JAR from sources (only needs JRE)
-RUN ./mvnw -q -DskipTests package
+# Build only the analysis module (static code parser)
+RUN mvn -q -DskipTests -pl structurizr-analysis -am package
 
-# Runtime entrypoint
-ENTRYPOINT ["java", "-jar", "/tool/target/structurizr-source-code-parser.jar"]
+# Runtime command
+ENTRYPOINT ["java", "-cp", "/tool/structurizr-analysis/target/structurizr-analysis-*.jar", "com.structurizr.analysis.StructurizrAnalysis"]
