@@ -5,12 +5,12 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y wget unzip maven graphviz && \
     rm -rf /var/lib/apt/lists/*
 
-# Download repo as ZIP instead of git clone
-RUN wget https://github.com/demoiselle/spring-explorer/archive/refs/heads/master.zip -O source.zip && \
+# Correct download URL (branch = main)
+RUN wget https://github.com/demoiselle/spring-explorer/archive/refs/heads/main.zip -O source.zip && \
     unzip source.zip && \
     rm source.zip && \
-    mv spring-explorer-master/* . && \
-    rm -rf spring-explorer-master
+    mv spring-explorer-main/* . && \
+    rm -rf spring-explorer-main
 
 RUN mvn -q -DskipTests package
 
