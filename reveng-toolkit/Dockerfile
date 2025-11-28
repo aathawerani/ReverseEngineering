@@ -16,20 +16,23 @@ RUN mkdir -p /tools/plantuml && \
 
 # install Structurizr CLI (zip)
 RUN mkdir -p /tools/structurizr && \
-    wget -q -O /tools/structurizr/structurizr-cli.zip https://github.com/structurizr/cli/releases/latest/download/structurizr-cli.zip && \
-    unzip -q /tools/structurizr/structurizr-cli.zip -d /tools/structurizr && \
-    rm /tools/structurizr/structurizr-cli.zip
+    curl -L -o /tools/structurizr/structurizr-cli.tar.gz \
+        https://github.com/structurizr/cli/releases/download/v1.33.0/structurizr-cli-1.33.0.tar.gz && \
+    apt-get update && apt-get install -y tar && \
+    tar -xzf /tools/structurizr/structurizr-cli.tar.gz -C /tools/structurizr && \
+    mv /tools/structurizr/structurizr-cli-1.33.0/structurizr-cli.jar /tools/structurizr/structurizr-cli.jar && \
+    chmod +x /tools/structurizr/structurizr-cli.jar && \
+    rm -rf /tools/structurizr/structurizr-cli.tar.gz /tools/structurizr/structurizr-cli-1.33.0
 
 # install mermaid-cli (npm)
 RUN npm install -g @mermaid-js/mermaid-cli
 
 RUN apt-get update && apt-get install -y dos2unix
-COPY tools /tools
-RUN find /tools -type f -exec dos2unix {} \;
 
 # copy local helper scripts into image
 COPY analyzer.py /tools/analyzer.py
 COPY entrypoint.sh /tools/entrypoint.sh
+RUN find /tools -type f -exec dos2unix {} \;
 RUN chmod +x /tools/entrypoint.sh /tools/analyzer.py
 
 # default workdir (where user mount their repo)
