@@ -16,13 +16,12 @@ RUN mkdir -p /tools/plantuml && \
 
 # install Structurizr CLI (zip)
 RUN mkdir -p /tools/structurizr && \
-    curl -L -o /tools/structurizr/structurizr-cli.tar.gz \
-        https://github.com/structurizr/cli/releases/download/v1.33.0/structurizr-cli-1.33.0.tar.gz && \
-    apt-get update && apt-get install -y tar && \
-    tar -xzf /tools/structurizr/structurizr-cli.tar.gz -C /tools/structurizr && \
-    mv /tools/structurizr/structurizr-cli-1.33.0/structurizr-cli.jar /tools/structurizr/structurizr-cli.jar && \
-    chmod +x /tools/structurizr/structurizr-cli.jar && \
-    rm -rf /tools/structurizr/structurizr-cli.tar.gz /tools/structurizr/structurizr-cli-1.33.0
+    curl -L -o /tools/structurizr/structurizr-cli.zip \
+        https://github.com/structurizr/cli/releases/download/v2025.11.09/structurizr-cli.zip && \
+    apt-get update && apt-get install -y unzip && \
+    unzip /tools/structurizr/structurizr-cli.zip -d /tools/structurizr && \
+    chmod +x /tools/structurizr/lib/structurizr-cli.jar && \
+    rm -f /tools/structurizr/structurizr-cli.zip
 
 # install mermaid-cli (npm)
 RUN npm install -g @mermaid-js/mermaid-cli
