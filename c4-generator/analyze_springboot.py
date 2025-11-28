@@ -43,37 +43,96 @@ class SpringBootAnalyzer:
         return service_path.name
     
     def find_application_properties(self, service_path):
-        """Find and parse application.properties or application.yml"""
+        """Find and parse application.properties, application.yml, or config.properties"""
         props = {}
+        
+        # Check for config.properties (legacy Spring apps)
+        config_files = list(service_path.rglob('config.properties'))
+        for prop_file in config_files:
+            if 'target' not in str(prop_file):  # Skip compiled files
+                try:
+                    with open(prop_file, 'r', encoding='utf-8', errors='ignore') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line and not line.startswith('#') and not line.startswith('!'):
+                                if '=' in line:
+                                    key, value = line.split('=', 1)
+                                    props[key.strip()] = value.strip()
+                except:
+                    pass
         
         # Check for application.yml
         yml_files = list(service_path.rglob('application*.yml')) + list(service_path.rglob('application*.yaml'))
         for yml_file in yml_files:
-            try:
-                with open(yml_file, 'r', encoding='utf-8') as f:
-                    data = yaml.safe_load(f)
-                    if data:
-                        props.update(data)
-            except:
-                pass
+            if 'target' not in str(yml_file):
+                try:
+                    with open(yml_file, 'r', encoding='utf-8') as f:
+                        data = yaml.safe_load(f)
+                        if data:
+                            props.update(self._flatten_dict(data))
+                except:
+                    pass
         
         # Check for application.properties
         prop_files = list(service_path.rglob('application*.properties'))
         for prop_file in prop_files:
-            try:
-                with open(prop_file, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith('#'):
-                            if '=' in line:
-                                key, value = line.split('=', 1)
-                                props[key.strip()] = value.strip()
-            except:
-                pass
+            if 'target' not in str(prop_file):
+                try:
+                    with open(prop_file, 'r', encoding='utf-8', errors='ignore') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line and not line.startswith('#'):
+                                if '=' in line:
+                                    key, value = line.split('=', 1)
+                                    props[key.strip()] = value.strip()
+                except:
+                    pass
         
         return props
     
-    def extract_rest_endpoints(self, service_path):
+    def _flatten_dict(self, d, parent_key='', sep='.'):
+        """Flatten nested dictionary for YAML properties"""
+        items = []
+        for k, v in d.items():
+            new_key = f"{parent_key}{sep}{k}" if parent_key else k
+            if isinstance(v, dict):
+                items.extend(self._flatten_dict(v, new_key, sep=sep).items())
+            else:
+                items.append((new_key, v))
+        return dict(items)
+    
+    def extract_service_components(self, service_path):
+        """Extract service layer components (for non-REST apps)"""
+        services = []
+        daos = []
+        entities = []
+        
+        java_files = list(service_path.rglob('*.java'))
+        
+        for java_file in java_files:
+            if 'target' in str(java_file):
+                continue
+                
+            try:
+                with open(java_file, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                    
+                    # Check for Service classes
+                    if '@Service' in content or java_file.name.endswith('Service.java'):
+                        services.append(java_file.name)
+                    
+                    # Check for DAO/Repository classes
+                    if '@Repository' in content or java_file.name.endswith('DAO.java') or java_file.name.endswith('Repository.java'):
+                        daos.append(java_file.name)
+                    
+                    # Check for Entity classes
+                    if '@Entity' in content or '@Table' in content:
+                        entities.append(java_file.name)
+                        
+            except:
+                pass
+        
+        return services, daos, entities
         """Extract REST endpoints from all Java files with REST annotations"""
         endpoints = []
         controllers = []
@@ -173,7 +232,10 @@ class SpringBootAnalyzer:
         db_info = {}
         
         # Check various datasource property formats
-        ds_url_keys = ['spring.datasource.url', 'spring.r2dbc.url', 'datasource.url']
+        ds_url_keys = [
+            'spring.datasource.url', 'spring.r2dbc.url', 'datasource.url',
+            'jdbc.url', 'db.url', 'database.url', 'hibernate.connection.url'
+        ]
         for key in ds_url_keys:
             if key in props:
                 db_url = props[key]
@@ -194,13 +256,25 @@ class SpringBootAnalyzer:
                 db_info['url'] = db_url
                 break
         
+        # Check driver class
+        driver_keys = ['jdbc.driverClassName', 'db.driver', 'hibernate.connection.driver_class']
+        for key in driver_keys:
+            if key in props:
+                driver = props[key]
+                if not db_info and 'postgresql' in driver.lower():
+                    db_info['type'] = 'PostgreSQL'
+                elif not db_info and 'mysql' in driver.lower():
+                    db_info['type'] = 'MySQL'
+                elif not db_info and 'oracle' in driver.lower():
+                    db_info['type'] = 'Oracle'
+        
         # Check for JPA/Hibernate
-        if 'spring.jpa.database-platform' in props or 'spring.jpa.hibernate.ddl-auto' in props:
+        if 'spring.jpa.database-platform' in props or 'spring.jpa.hibernate.ddl-auto' in props or 'hibernate.dialect' in props:
             if not db_info:
-                db_info['type'] = 'JPA Database'
+                db_info['type'] = 'JPA/Hibernate Database'
         
         # Check for MongoDB
-        if 'spring.data.mongodb.uri' in props or 'spring.data.mongodb.host' in props:
+        if 'spring.data.mongodb.uri' in props or 'spring.data.mongodb.host' in props or 'mongodb.uri' in props:
             db_info['type'] = 'MongoDB'
         
         return db_info
@@ -215,17 +289,30 @@ class SpringBootAnalyzer:
             
             endpoints, controllers = self.extract_rest_endpoints(service_path)
             feign_clients, http_clients = self.extract_feign_clients(service_path)
+            services, daos, entities = self.extract_service_components(service_path)
+            
+            # Determine port from various property keys
+            port = 'unknown'
+            port_keys = ['server.port', 'port', 'http.port', 'tomcat.port', 'jetty.port']
+            for key in port_keys:
+                if key in props:
+                    port = props[key]
+                    break
             
             self.services[service_name] = {
                 'path': str(service_path),
                 'endpoints': endpoints,
                 'controllers': controllers,
+                'services': services,
+                'daos': daos,
+                'entities': entities,
                 'feign_clients': feign_clients,
                 'http_clients': http_clients,
                 'rest_calls': self.extract_rest_template_calls(service_path),
                 'database': self.extract_database_info(props),
-                'port': props.get('server.port', props.get('server', {}).get('port', 'unknown')),
-                'properties': props
+                'port': port,
+                'properties': props,
+                'is_rest_api': len(controllers) > 0
             }
             
             # Create relationships
@@ -315,39 +402,66 @@ class SpringBootAnalyzer:
     def generate_report(self, output_file):
         """Generate analysis report"""
         report = []
-        report.append("# Spring Boot Microservices Analysis Report\n")
+        report.append("# Spring Application Analysis Report\n")
         report.append(f"Total Services Found: {len(self.services)}\n")
         
         for service_name, service_data in self.services.items():
             report.append(f"\n## {service_name}")
             report.append(f"- **Path**: {service_data['path']}")
+            report.append(f"- **Type**: {'REST API' if service_data.get('is_rest_api') else 'Legacy Spring Application'}")
             report.append(f"- **Port**: {service_data['port']}")
-            report.append(f"- **Controllers Found**: {len(service_data.get('controllers', []))}")
             
+            # REST Controllers (if any)
             if service_data.get('controllers'):
+                report.append(f"- **REST Controllers Found**: {len(service_data['controllers'])}")
                 report.append(f"  - {', '.join(service_data['controllers'][:10])}")
             
-            report.append(f"- **Endpoints Found**: {len(service_data['endpoints'])}")
             if service_data['endpoints']:
+                report.append(f"- **REST Endpoints Found**: {len(service_data['endpoints'])}")
                 for endpoint in service_data['endpoints'][:10]:
                     report.append(f"  - {endpoint}")
                 if len(service_data['endpoints']) > 10:
                     report.append(f"  - ... and {len(service_data['endpoints']) - 10} more")
             
+            # Service Layer Components
+            if service_data.get('services'):
+                report.append(f"- **Service Classes**: {len(service_data['services'])}")
+                if service_data['services'][:5]:
+                    report.append(f"  - {', '.join(service_data['services'][:5])}")
+            
+            if service_data.get('daos'):
+                report.append(f"- **DAO/Repository Classes**: {len(service_data['daos'])}")
+                if service_data['daos'][:5]:
+                    report.append(f"  - {', '.join(service_data['daos'][:5])}")
+            
+            if service_data.get('entities'):
+                report.append(f"- **Entity Classes**: {len(service_data['entities'])}")
+                if service_data['entities'][:5]:
+                    report.append(f"  - {', '.join(service_data['entities'][:5])}")
+            
+            # External Dependencies
             if service_data.get('feign_clients'):
                 report.append(f"- **Feign Clients**: {', '.join(service_data['feign_clients'])}")
             
             if service_data.get('http_clients'):
                 report.append(f"- **HTTP Client Files**: {len(service_data['http_clients'])} files")
             
+            # Database
             if service_data['database']:
                 report.append(f"- **Database**: {service_data['database'].get('type', 'Unknown')}")
                 if 'url' in service_data['database']:
                     report.append(f"  - URL: {service_data['database']['url']}")
             
-            # Show some properties if found
+            # Configuration
             if service_data.get('properties'):
                 report.append(f"- **Configuration Properties**: {len(service_data['properties'])} found")
+                # Show some interesting properties
+                interesting_keys = [k for k in service_data['properties'].keys() 
+                                   if any(x in k.lower() for x in ['url', 'host', 'port', 'endpoint', 'api'])]
+                if interesting_keys[:5]:
+                    report.append("  - Key properties:")
+                    for key in interesting_keys[:5]:
+                        report.append(f"    - {key}")
         
         with open(output_file, 'w') as f:
             f.write('\n'.join(report))
