@@ -1,39 +1,71 @@
 ﻿import os
-import json
+import argparse
 
-def write_structurizr_dsl(system_name, containers, out_file):
+def scan_project(src_path):
     """
-    Write a Structurizr DSL workspace from detected system and containers.
-    :param system_name: Name of the software system
-    :param containers: List of dicts with 'name', 'description', 'technology'
-    :param out_file: Path to output DSL file
+    Scan the project directory and detect systems, containers, and components.
+    For simplicity, each top-level folder = container, each file = component.
     """
-    with open(out_file, 'w') as f:
-        f.write("workspace {\n\n")
+    containers = []
+    for root, dirs, files in os.walk(src_path):
+        # Skip hidden dirs
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        if root == src_path:
+            # Top-level directories = containers
+            for d in dirs:
+                container = {
+                    "name": d,
+                    "desc": "Auto-detected package container",
+                    "tech": "Java",  # You can make this dynamic based on file type
+                    "components": []
+                }
+                # Scan components inside container
+                container_path = os.path.join(root, d)
+                for f in os.listdir(container_path):
+                    if f.endswith(".java") or f.endswith(".py"):  # adjust as needed
+                        container["components"].append({
+                            "name": os.path.splitext(f)[0],
+                            "desc": "Auto-detected class/file",
+                            "tech": "Java" if f.endswith(".java") else "Python"
+                        })
+                containers.append(container)
+    return containers
+
+def generate_dsl(containers, output_file):
+    with open(output_file, "w") as f:
+        f.write("workspace {\n")
         f.write("    model {\n")
-        f.write(f"        softwareSystem \"{system_name}\" \"Auto-detected package container\" {{\n")
-        for c in containers:
-            f.write(f"            container \"{c['name']}\" \"{c.get('description','')}\" \"{c.get('technology','Java')}\"\n")
-        f.write("        }\n")
-        f.write("    }\n\n")
+        f.write('        softwareSystem "Auto-detected System" {\n')
+
+        if not containers:
+            f.write('            container "Placeholder" "Auto-generated container" "Java"\n')
+        else:
+            for c in containers:
+                name = c.get("name", "Unnamed")
+                description = c.get("description", "Auto-detected package container")
+                technology = c.get("technology", "Java")
+                f.write(f'            container "{name}" "{description}" "{technology}"\n')
+
+        f.write("        }\n")  # end softwareSystem
+        f.write("    }\n")      # end model
 
         f.write("    views {\n")
-        f.write(f"        systemContext \"{system_name}\" {{\n")
-        f.write("            include *\n")
-        f.write("            autolayout lr\n")
-        f.write("        }\n\n")
-
-        f.write(f"        container \"{system_name}\" {{\n")
+        f.write('        systemContext "Auto-detected System" {\n')
         f.write("            include *\n")
         f.write("            autolayout lr\n")
         f.write("        }\n")
         f.write("    }\n")
         f.write("}\n")
 
-# Example usage
-detected_containers = [
-    {"name": "vaulsys", "description": "Main container", "technology": "Java"},
-    {"name": "auth", "description": "Authentication module", "technology": "Java"}
-]
+def main():
+    parser = argparse.ArgumentParser(description="Reverse Engineer Project to Structurizr DSL")
+    parser.add_argument("--src", required=True, help="Path to project source")
+    parser.add_argument("--out", required=True, help="Output DSL file path")
+    args = parser.parse_args()
 
-write_structurizr_dsl("VaulSys", detected_containers, "/workspace/rev-output/workspace.dsl")
+    containers = scan_project(args.src)
+    generate_dsl(containers, args.out)
+    print(f"Structurizr DSL generated at: {args.out}")
+
+if __name__ == "__main__":
+    main()
