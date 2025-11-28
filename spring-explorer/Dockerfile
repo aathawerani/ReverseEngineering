@@ -12,10 +12,13 @@ WORKDIR /tools
 # ------------------------------
 # 1. Install Spring Explorer (static Spring Boot architecture)
 # ------------------------------
-RUN wget https://github.com/demoiselle/spring-explorer/archive/refs/heads/main.zip -O se.zip && \
+# Install Spring Explorer
+RUN wget https://codeload.github.com/demoiselle/spring-explorer/zip/master -O se.zip && \
     unzip se.zip && rm se.zip && \
-    mv spring-explorer-main spring-explorer && \
+    mv spring-explorer-master spring-explorer && \
     cd spring-explorer && mvn -q -DskipTests package
+
+
 
 # ------------------------------
 # 2. Install Structurizr CLI
